@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Insurance Claims SOP Agent</title>
+    <style>
+      body {
+        font-family: system-ui;
+        background: #f3f6fb;
+        color: #17223b;
+        margin: 0;
+      }
+
+      main {
+        max-width: 850px;
+        margin: 32px auto;
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 8px 30px #15244518;
+        overflow: hidden;
+      }
+
+      header {
+        background: #163b75;
+        color: white;
+        padding: 22px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 23px;
+      }
+
+      small {
+        opacity: .8;
+      }
+
+      .status {
+        padding: 14px 22px;
+        background: #eaf1fa;
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 13px;
+      }
+
+      .chat {
+        height: 480px;
+        overflow: auto;
+        padding: 22px;
+      }
+
+      .bubble {
+        padding: 12px 15px;
+        border-radius: 12px;
+        max-width: 82%;
+        margin: 12px 0;
+        white-space: pre-wrap;
+        line-height: 1.5;
+      }
+
+      .agent {
+        background: #eef3fb;
+      }
+
+      .user {
+        background: #dcefe6;
+        margin-left: auto;
+      }
+
+      form {
+        display: flex;
+        padding: 16px;
+        gap: 10px;
+        border-top: 1px solid #ddd;
+      }
+
+      input {
+        flex: 1;
+        padding: 13px;
+        border: 1px solid #bbc6d6;
+        border-radius: 9px;
+        font-size: 15px;
+      }
+
+      button:disabled {
+        opacity: .55;
+        cursor: wait;
+      }
+
+      button {
+        border: 0;
+        border-radius: 9px;
+        padding: 12px 20px;
+        background: #2058aa;
+        color: white;
+        cursor: pointer;
+      }
+
+      .reset {
+        background: #63718a;
+      }
+
+      footer {
+        padding: 0 22px 16px;
+        font-size: 12px;
+        color: #59677c;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Insurance Claims Support</h1>
+        <small>SOP-governed conversational demo · synthetic customer data</small>
+      </header>
+      <div class="status">
+        <span id="phase">Phase: VERIFY_ID</span>
+        <span id="verified">Identity: not verified</span>
+        <span id="mode" role="status">Conversation mode: checking…</span>
+        <span id="hint">Memory: —</span>
+      </div>
+      <div id="chat" class="chat" role="log" aria-live="polite" aria-label="Conversation">
+        <div class="bubble agent">Hello! I can help with insurance claims. To protect your information, please provide any three of: full name, date of birth, phone, email, or last four ID digits. You can also tell me why you're calling; I'll remember it while we verify your identity.</div>
+      </div>
+      <form id="form">
+        <input id="text" autocomplete="off" aria-label="Your message" placeholder="Type your message..." required>
+        <button>Send</button>
+        <button type="button" class="reset" id="reset">New chat</button>
+      </form>
+      <footer>Demo only: no live human transfer or email delivery. Conversational responses use authorized claim information. Identity and consent stay under local workflow control.</footer>
+    </main>
+    <script>
+      let sid = null;
+      let busy = false;
+      const box = document.querySelector('#chat');
+
+      function add(t, who) {
+        const el = document.createElement('div');
+        el.className = 'bubble ' + who;
+        el.textContent = t;
+        box.appendChild(el);
+        box.scrollTop = box.scrollHeight;
+        return el;
+      }
+
+      document.querySelector('#form').onsubmit = async e => {
+        e.preventDefault();
+        if (busy) return;
+
+        const inp = document.querySelector('#text');
+        const t = inp.value.trim();
+        if (!t) return;
+
+        add(t, 'user');
+        inp.value = '';
+        busy = true;
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(b => b.disabled = true);
+        inp.disabled = true;
+        document.querySelector('#mode').textContent = 'Preparing your response…';
+        const waiting = add(
+          'I’m checking your message. If the conversational service is slow, I’ll use the available claim information to respond.',
+          'agent'
+        );
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 190000);
+
+        try {
+          const r = await fetch('/api/chat-v2', {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: sid, text: t})
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.detail || 'Request failed');
+
+          sid = d.session_id;
+          waiting.remove();
+          add(d.reply, 'agent');
+          document.querySelector('#mode').textContent =
+            d.response_mode === 'fallback'
+              ? 'Limited mode: conversational response unavailable'
+              : (d.response_mode === 'model' ? 'Conversational mode' : 'Basic rules mode');
+          document.querySelector('#phase').textContent = 'Phase: ' + d.phase;
+          document.querySelector('#verified').textContent =
+            'Identity: ' + (d.verified ? 'verified' : 'not verified');
+          document.querySelector('#hint').textContent =
+            'Memory: ' + JSON.stringify(d.remembered_hint);
+        } catch (err) {
+          waiting.remove();
+          add(
+            err.name === 'AbortError'
+              ? 'The request timed out. It may have completed; retrying send will not queue another summary.'
+              : ('Request failed: ' + err.message),
+            'agent'
+          );
+        } finally {
+          clearTimeout(timer);
+          busy = false;
+          buttons.forEach(b => b.disabled = false);
+          inp.disabled = false;
+          inp.focus();
+        }
+      };
+
+      document.querySelector('#reset').onclick = () => location.reload();
+
+      fetch('/api/health')
+        .then(r => r.json())
+        .then(d => {
+          document.querySelector('#mode').textContent =
+            d.mode === 'model' ? 'Conversational mode configured' : 'Basic rules mode';
+        })
+        .catch(() => {
+          document.querySelector('#mode').textContent = 'Service unavailable';
+        });
+    </script>
+  </body>
+</html>
